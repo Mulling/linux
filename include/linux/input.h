@@ -417,6 +417,12 @@ int input_flush_device(struct input_handle *handle, struct file *file);
 void input_set_timestamp(struct input_dev *dev, ktime_t timestamp);
 ktime_t *input_get_timestamp(struct input_dev *dev);
 
+struct bpf_input_ctx {
+    unsigned int *type;
+    unsigned int *code;
+    int *value;
+};
+
 void input_event(struct input_dev *dev, unsigned int type, unsigned int code, int value);
 void input_inject_event(struct input_handle *handle, unsigned int type, unsigned int code, int value);
 

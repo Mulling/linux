@@ -7,6 +7,7 @@ pound := \#
 
 # List of programs to build
 tprogs-y := test_lru_dist
+tprogs-y += input_event
 tprogs-y += sock_example
 tprogs-y += fds_example
 tprogs-y += sockex1
@@ -69,6 +70,7 @@ TRACE_HELPERS := ../../tools/testing/selftests/bpf/trace_helpers.o
 XDP_SAMPLE := xdp_sample_user.o
 
 fds_example-objs := fds_example.o
+input_event-objs := input_event.o
 sockex1-objs := sockex1_user.o
 sockex2-objs := sockex2_user.o
 sockex3-objs := sockex3_user.o
@@ -121,6 +123,7 @@ xdp_router_ipv4-objs := xdp_router_ipv4_user.o $(XDP_SAMPLE)
 
 # Tell kbuild to always build the programs
 always-y := $(tprogs-y)
+alaway-y += input_event.bpf.o
 always-y += sockex1_kern.o
 always-y += sockex2_kern.o
 always-y += sockex3_kern.o

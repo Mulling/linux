@@ -6,6 +6,7 @@
  */
 
 
+#include "linux/compiler_attributes.h"
 #define pr_fmt(fmt) KBUILD_BASENAME ": " fmt
 
 #include <linux/init.h>
@@ -25,9 +26,13 @@
 #include <linux/kstrtox.h>
 #include <linux/mutex.h>
 #include <linux/rcupdate.h>
+#include <linux/btf.h>
+#include <linux/btf_ids.h>
 #include "input-compat.h"
 #include "input-core-private.h"
 #include "input-poller.h"
+
+#include "asm-generic/error-injection.h"
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
 MODULE_DESCRIPTION("Input core");
@@ -405,6 +410,39 @@ void input_handle_event(struct input_dev *dev,
 	}
 }
 
+__bpf_kfunc
+void bpf_input_event(unsigned int type,
+        unsigned int code, unsigned int value)
+{
+ //trace_printk("input event %u %u %d ", type, code, value);
+}
+
+__bpf_kfunc
+int *bpf_test(struct bpf_input_ctx *ctx, unsigned int offset, const size_t rdwr_buf_size)
+{
+    // trace_printk("input event %u %u %d ",
+    //         *(ctx->type), *(ctx->code), *(ctx->value));
+    return ctx->code;
+}
+
+BTF_SET8_START(bpf_input_set)
+BTF_ID_FLAGS(func, bpf_input_event)
+BTF_ID_FLAGS(func, bpf_test, KF_RET_NULL)
+BTF_SET8_END(bpf_input_set)
+
+static const struct btf_kfunc_id_set bpf_input_kfunc_set = {
+	.owner = THIS_MODULE,
+	.set = &bpf_input_set,
+};
+
+__weak
+int input_event_bpf(unsigned int type,
+        unsigned int code, unsigned int value, struct bpf_input_ctx *ctx)
+{
+	return 0;
+}
+ALLOW_ERROR_INJECTION(input_event_bpf, ERRNO);
+
 /**
  * input_event() - report new input event
  * @dev: device that generated the event
@@ -426,6 +464,18 @@ void input_event(struct input_dev *dev,
 		 unsigned int type, unsigned int code, int value)
 {
 	unsigned long flags;
+
+    struct bpf_input_ctx ctx ={
+        .type = &type,
+        .code = &code,
+        .value = &value
+    };
+
+	if (input_event_bpf(type, code, value, &ctx) != 0) {
+		return;
+	}
+
+    trace_printk("new values %u %u %d ", type, code, value);
 
 	if (is_event_supported(type, dev->evbit, EV_MAX)) {
 
@@ -1322,22 +1372,38 @@ static int __init input_proc_init(void)
 {
 	struct proc_dir_entry *entry;
 
+    int err;
+
 	proc_bus_input_dir = proc_mkdir("bus/input", NULL);
-	if (!proc_bus_input_dir)
+	if (!proc_bus_input_dir) {
+        pr_warn("fail to create bus/input");
 		return -ENOMEM;
+    }
 
 	entry = proc_create("devices", 0, proc_bus_input_dir,
 			    &input_devices_proc_ops);
-	if (!entry)
+	if (!entry) {
+        pr_warn("fail to create devices");
 		goto fail1;
+    }
 
 	entry = proc_create("handlers", 0, proc_bus_input_dir,
 			    &input_handlers_proc_ops);
-	if (!entry)
+	if (!entry) {
+		pr_warn("fail to create handlers");
 		goto fail2;
+    }
+
+	err = register_btf_kfunc_id_set(BPF_PROG_TYPE_TRACING,
+                &bpf_input_kfunc_set);
+	if (err) {
+		pr_warn("fail register input kfunc set: %d", err);
+		goto fail3;
+	}
 
 	return 0;
 
+ fail3: remove_proc_entry("handlers", proc_bus_input_dir);
  fail2:	remove_proc_entry("devices", proc_bus_input_dir);
  fail1: remove_proc_entry("bus/input", NULL);
 	return -ENOMEM;
@@ -2657,7 +2723,6 @@ EXPORT_SYMBOL(input_free_minor);
 static int __init input_init(void)
 {
 	int err;
-
 	err = class_register(&input_class);
 	if (err) {
 		pr_err("unable to register input_dev class\n");
